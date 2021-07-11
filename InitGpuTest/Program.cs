@@ -16,7 +16,7 @@ namespace InitGpuTest
 
         static void Main() {
 
-            int n = 1000000;
+            int n = 10000000;
             Arr = new float [n];
             int r = 10;
 
