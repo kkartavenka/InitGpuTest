@@ -40,33 +40,32 @@ namespace InitGpuTest
             using var context = new Context();
 
             context.EnableAlgorithms();
-            sw.Start();
 
             using var accelerator = new CudaAccelerator(context);
+            var reduceFloat = accelerator.CreateReduction<float, AddFloat>();
+            var loadedKernel = accelerator.LoadAutoGroupedStreamKernel((Index1 i, ArrayView<float> data, long value) => data[i] = data[i] / value);
 
+            var sumKernel = accelerator.LoadAutoGroupedStreamKernel((Index1 i, ArrayView<float> sourceData, ArrayView<float> destination, ArrayView<float> mean) => {
+                destination[i] = (sourceData[i] - mean[0]) * (sourceData[i] - mean[0]);
+            });
+
+            sw.Start();
             for (int i = 0; i < r; i++) {
                 using var sourceBuffer = accelerator.Allocate(Arr);
                 using var meanValueBuffer = accelerator.Allocate<float>(1);
                 using var sumPoweredBuffer = accelerator.Allocate<float>(Arr.Length);
                 using var sumValueBuffer = accelerator.Allocate<float>(1);
 
-                accelerator.Reduce<float, AddFloat>(accelerator.DefaultStream, sourceBuffer.View, meanValueBuffer.View);
-                
-                var loadedKernel = accelerator.LoadAutoGroupedStreamKernel((Index1 i, ArrayView<float> data, long value) => data[i] = data[i] / value);
+                reduceFloat(accelerator.DefaultStream, sourceBuffer.View, meanValueBuffer.View);
+
                 loadedKernel(meanValueBuffer.Length, meanValueBuffer, sourceBuffer.Length);
 
-                var sumKernel = accelerator.LoadAutoGroupedStreamKernel((Index1 i, ArrayView<float> sourceData, ArrayView<float> destination, ArrayView<float> mean) => {
-                    destination[i] = (sourceData[i] - mean[0]) * (sourceData[i] - mean[0]);
-                });
                 sumKernel(sumPoweredBuffer.Length, sourceBuffer, sumPoweredBuffer, meanValueBuffer);
 
-                accelerator.Reduce<float, AddFloat>(accelerator.DefaultStream, sumPoweredBuffer.View, sumValueBuffer.View);
+                reduceFloat(accelerator.DefaultStream, sumPoweredBuffer.View, sumValueBuffer.View);
 
-                accelerator.Synchronize();
-
-                float sd = MathF.Sqrt(sumValueBuffer.GetAsArray().ElementAt(0) / Arr.Length);
-                sourceBuffer.Dispose();
-                meanValueBuffer.Dispose();
+                sumValueBuffer.CopyTo(out float sumValueBuffer0, 0);
+                float sd = MathF.Sqrt(sumValueBuffer0 / Arr.Length);
             }
             sw.Stop();
             Console.WriteLine($"GPU: {sw.ElapsedMilliseconds}");
